@@ -1,6 +1,6 @@
 ﻿package com.example.uir_android.domain.model
 
-import com.example.uir_android.core.util.BLANK_SYMBOL
+import com.example.uir_android.domain.turing.BLANK_SYMBOL
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,8 +13,21 @@ enum class MoveDirection {
 data class AppSettings(
     val maxRunSteps: Int,
     val runDelayMs: Long,
-    val debugEnabled: Boolean
+    val debugEnabled: Boolean,
+    val themeMode: AppThemeMode = AppThemeMode.SYSTEM
 )
+
+enum class AppThemeMode {
+    SYSTEM,
+    LIGHT,
+    DARK;
+
+    companion object {
+        fun fromStoredValue(value: String?): AppThemeMode {
+            return entries.firstOrNull { it.name == value } ?: SYSTEM
+        }
+    }
+}
 
 data class TmProgram(
     val id: Long = 0,

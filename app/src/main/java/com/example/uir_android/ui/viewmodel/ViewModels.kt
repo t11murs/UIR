@@ -2,51 +2,42 @@
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.uir_android.core.util.AppResult
-import com.example.uir_android.core.util.BLANK_INPUT_TOKEN
-import com.example.uir_android.core.util.DEFAULT_TAPE_RADIUS
-import com.example.uir_android.core.util.encodeSymbolToken
-import com.example.uir_android.core.util.normalizeSymbolSequenceForDisplay
-import com.example.uir_android.core.util.parseCompactSymbolSequence
-import com.example.uir_android.core.util.parseSingleSymbolToken
-import com.example.uir_android.domain.model.TapeCell
+import com.example.uir_android.core.common.AppDispatchers
+import com.example.uir_android.core.common.ApplicationScope
+import com.example.uir_android.core.common.AppResult
+import com.example.uir_android.domain.turing.BLANK_INPUT_TOKEN
+import com.example.uir_android.ui.util.encodeSymbolToken
+import com.example.uir_android.ui.util.normalizeSymbolSequenceForDisplay
+import com.example.uir_android.domain.turing.parseCompactSymbolSequence
+import com.example.uir_android.domain.turing.parseSingleSymbolToken
 import com.example.uir_android.domain.model.TmExecutionState
 import com.example.uir_android.domain.model.TmProgram
+import com.example.uir_android.domain.repository.SettingsRepository
+import com.example.uir_android.domain.repository.TmRepository
+import com.example.uir_android.ui.editor.TuringEditor
 import com.example.uir_android.domain.usecase.CreateInitialExecutionUseCase
-import com.example.uir_android.domain.usecase.EnsurePresetProgramsUseCase
-import com.example.uir_android.domain.usecase.LoadProgramsUseCase
-import com.example.uir_android.domain.usecase.ObserveRunsUseCase
-import com.example.uir_android.domain.usecase.ObserveSettingsUseCase
 import com.example.uir_android.domain.usecase.ParseProgramUseCase
 import com.example.uir_android.domain.usecase.RunUseCase
-import com.example.uir_android.domain.usecase.SaveProgramUseCase
 import com.example.uir_android.domain.usecase.SaveRunUseCase
 import com.example.uir_android.domain.usecase.StepUseCase
-import com.example.uir_android.domain.usecase.UpdateDebugEnabledUseCase
-import com.example.uir_android.domain.usecase.UpdateMaxRunStepsUseCase
-import com.example.uir_android.domain.usecase.UpdateRunDelayUseCase
 import com.example.uir_android.ui.state.CommandSymbolFieldTarget
 import com.example.uir_android.ui.state.FocusedCommandSymbolField
 import com.example.uir_android.ui.state.ProgramCommandRowUiState
-import com.example.uir_android.ui.state.SettingsUiState
 import com.example.uir_android.ui.state.TuringUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import com.example.uir_android.core.util.OMEGA_INPUT_TOKEN
-import com.example.uir_android.core.util.PARTIAL_INPUT_TOKEN
-
-abstract class EventViewModel : ViewModel() {
-    protected val messageChannel = Channel<String>(Channel.BUFFERED)
-    val messages = messageChannel.receiveAsFlow()
-}
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import com.example.uir_android.domain.turing.OMEGA_INPUT_TOKEN
+import com.example.uir_android.domain.turing.PARTIAL_INPUT_TOKEN
 
 @HiltViewModel
 class TuringViewModel @Inject constructor(
@@ -54,33 +45,20 @@ class TuringViewModel @Inject constructor(
     private val stepUseCase: StepUseCase,
     private val runUseCase: RunUseCase,
     private val createInitialExecutionUseCase: CreateInitialExecutionUseCase,
-    private val saveProgramUseCase: SaveProgramUseCase,
-    private val loadProgramsUseCase: LoadProgramsUseCase,
-    private val observeRunsUseCase: ObserveRunsUseCase,
+    private val tmRepository: TmRepository,
     private val saveRunUseCase: SaveRunUseCase,
-    private val ensurePresetProgramsUseCase: EnsurePresetProgramsUseCase,
-    observeSettingsUseCase: ObserveSettingsUseCase
+    private val dispatchers: AppDispatchers,
+    @ApplicationScope private val applicationScope: CoroutineScope,
+    settingsRepository: SettingsRepository
 ) : EventViewModel() {
+    private data class RunPersistenceSnapshot(
+        val generation: Long,
+        val programId: Long?,
+        val executionState: TmExecutionState
+    )
+
     private companion object {
         const val RUN_UI_UPDATE_STEP_INTERVAL = 10
-
-        const val DISPLAY_BLANK_SYMBOL = "λ"
-        const val DISPLAY_OMEGA_SYMBOL = "Ω"
-        const val DISPLAY_PARTIAL_SYMBOL = "∂"
-    }
-
-    private fun toDisplaySymbols(value: String): String {
-        return value
-            .replace(BLANK_INPUT_TOKEN, DISPLAY_BLANK_SYMBOL)
-            .replace(OMEGA_INPUT_TOKEN, DISPLAY_OMEGA_SYMBOL)
-            .replace(PARTIAL_INPUT_TOKEN, DISPLAY_PARTIAL_SYMBOL)
-    }
-
-    private fun toParserTokens(value: String): String {
-        return value
-            .replace(DISPLAY_BLANK_SYMBOL, BLANK_INPUT_TOKEN)
-            .replace(DISPLAY_OMEGA_SYMBOL, OMEGA_INPUT_TOKEN)
-            .replace(DISPLAY_PARTIAL_SYMBOL, PARTIAL_INPUT_TOKEN)
     }
 
     private val _state = MutableStateFlow(TuringUiState())
@@ -88,7 +66,9 @@ class TuringViewModel @Inject constructor(
 
     private var executionState = createInitialExecutionUseCase("")
     private var runJob: Job? = null
-    private var currentRunPersisted = false
+    private var currentRunGeneration = 0L
+    private val runPersistenceMutex = Mutex()
+    private val persistedRunGenerations = mutableSetOf<Long>()
     private var nextRowId = 1L
 
     init {
@@ -96,27 +76,27 @@ class TuringViewModel @Inject constructor(
         pushExecutionState(executionState)
 
         viewModelScope.launch {
-            ensurePresetProgramsUseCase()
+            tmRepository.ensurePresetPrograms()
         }
 
         viewModelScope.launch {
-            loadProgramsUseCase().collect { programs ->
+            tmRepository.observePrograms().collect { programs ->
                 _state.update { current -> current.copy(availablePrograms = programs) }
             }
         }
 
         viewModelScope.launch {
-            observeRunsUseCase().collect { runs ->
+            tmRepository.observeRecentRuns().collect { runs ->
                 _state.update { it.copy(recentRuns = runs) }
             }
         }
 
         viewModelScope.launch {
-            observeSettingsUseCase().collect { settings ->
+            settingsRepository.observeSettings().collect { settings ->
                 _state.update { current ->
                     current.copy(
                         settings = settings,
-                        tapeWindow = buildTapeWindow(executionState, offset = current.windowOffset)
+                        tapeWindow = TuringEditor.buildTapeWindow(executionState, current.windowOffset)
                     )
                 }
             }
@@ -129,7 +109,7 @@ class TuringViewModel @Inject constructor(
 
     fun updateInputTape(value: String) {
         cancelRun()
-        val displayValue = toDisplaySymbols(value)
+        val displayValue = TuringEditor.displaySymbols(value)
         _state.update {
             it.copy(
                 inputTape = displayValue,
@@ -151,6 +131,7 @@ class TuringViewModel @Inject constructor(
     }
 
     fun addCommandRow() {
+        cancelRun()
         _state.update {
             val rows = it.programRows + newCommandRow()
             it.copy(programRows = rows)
@@ -158,6 +139,7 @@ class TuringViewModel @Inject constructor(
     }
 
     fun removeCommandRow(rowId: Long) {
+        cancelRun()
         _state.update {
             val rows = it.programRows.filterNot { row -> row.id == rowId }.ifEmpty { listOf(newCommandRow()) }
             it.copy(
@@ -176,7 +158,7 @@ class TuringViewModel @Inject constructor(
     }
 
     fun updateCommandLeftRule(rowId: Long, value: String, cursor: Int = value.length) {
-        val displayValue = toDisplaySymbols(value)
+        val displayValue = TuringEditor.displaySymbols(value)
         updateRow(rowId) {
             it.copy(
                 leftRuleText = displayValue,
@@ -186,7 +168,7 @@ class TuringViewModel @Inject constructor(
     }
 
     fun updateCommandRightRule(rowId: Long, value: String, cursor: Int = value.length) {
-        val displayValue = toDisplaySymbols(value)
+        val displayValue = TuringEditor.displaySymbols(value)
         updateRow(rowId) {
             it.copy(
                 rightRuleText = displayValue,
@@ -224,7 +206,7 @@ class TuringViewModel @Inject constructor(
 
     fun insertSpecialToken(token: String) {
         val current = _state.value
-        val displayToken = toDisplaySymbols(token)
+        val displayToken = TuringEditor.displaySymbols(token)
 
         if (current.isInputTapeFocused) {
             updateInputTape(current.inputTape + displayToken)
@@ -247,34 +229,32 @@ class TuringViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            messageChannel.send("Сначала выберите поле ввода")
+            emitSnackbar("Сначала выберите поле ввода")
         }
     }
 
     fun placeOnTape() {
         cancelRun()
         recreateExecutionFromInput(
-            persistCurrentRun = false,
+            persistCurrentRun = true,
             successMessage = "Лента инициализирована"
         )
     }
 
     fun clearTape() {
         cancelRun()
-        viewModelScope.launch {
-            persistRunIfNeeded()
-            _state.update {
-                it.copy(
-                    inputTape = "",
-                    windowOffset = 0,
-                    errorMessage = null,
-                    statusMessage = null
-                )
-            }
-            executionState = createInitialExecutionUseCase("")
-            currentRunPersisted = false
-            pushExecutionState(executionState)
+        val previousRun = createRunPersistenceSnapshot()
+        _state.update {
+            it.copy(
+                inputTape = "",
+                windowOffset = 0,
+                errorMessage = null,
+                statusMessage = null
+            )
         }
+        replaceExecutionState(createInitialExecutionUseCase(""))
+        pushExecutionState(executionState)
+        persistRunAsync(previousRun)
     }
 
     fun shiftTapeWindow(delta: Int) {
@@ -282,46 +262,47 @@ class TuringViewModel @Inject constructor(
         _state.update {
             it.copy(
                 windowOffset = nextOffset,
-                tapeWindow = buildTapeWindow(executionState, offset = nextOffset)
+                tapeWindow = TuringEditor.buildTapeWindow(executionState, nextOffset)
             )
         }
     }
 
     fun checkSyntax() {
         cancelRun()
-        buildValidatedProgram()?.let {
+        runJob = viewModelScope.launch {
+            buildValidatedProgram() ?: return@launch
             _state.update {
                 it.copy(
                     errorMessage = null,
                     statusMessage = "Синтаксис корректен"
                 )
             }
-            viewModelScope.launch { messageChannel.send("Синтаксис корректен") }
+            emitSnackbar("Синтаксис корректен")
         }
     }
 
     fun step() {
         cancelRun()
-        val parsedProgram = buildValidatedProgram() ?: return
-        if (executionState.steps == 0 && executionState.tape.isEmpty() && _state.value.inputTape.isNotEmpty()) {
-            val normalizedTape = normalizeInputTape(reportErrors = true) ?: return
-            executionState = createInitialExecutionUseCase(normalizedTape)
+        runJob = viewModelScope.launch {
+            val parsedProgram = buildValidatedProgram() ?: return@launch
+            if (executionState.steps == 0 && executionState.tape.isEmpty() && _state.value.inputTape.isNotEmpty()) {
+                val normalizedTape = normalizeInputTape(reportErrors = true) ?: return@launch
+                replaceExecutionState(createInitialExecutionUseCase(normalizedTape))
+            }
+            executionState = stepUseCase(parsedProgram, executionState)
+            pushExecutionState(executionState)
+            finishRunIfNeeded(executionState)
         }
-        executionState = stepUseCase(parsedProgram, executionState)
-        currentRunPersisted = false
-        pushExecutionState(executionState)
-        finishRunIfNeeded(executionState)
     }
 
     fun run() {
         cancelRun()
-        val parsedProgram = buildValidatedProgram() ?: return
-        if (executionState.steps == 0 && executionState.tape.isEmpty() && _state.value.inputTape.isNotEmpty()) {
-            val normalizedTape = normalizeInputTape(reportErrors = true) ?: return
-            executionState = createInitialExecutionUseCase(normalizedTape)
-        }
-
         runJob = viewModelScope.launch {
+            val parsedProgram = buildValidatedProgram() ?: return@launch
+            if (executionState.steps == 0 && executionState.tape.isEmpty() && _state.value.inputTape.isNotEmpty()) {
+                val normalizedTape = normalizeInputTape(reportErrors = true) ?: return@launch
+                replaceExecutionState(createInitialExecutionUseCase(normalizedTape))
+            }
             val shouldRenderEachStep = _state.value.settings.runDelayMs > 0L
             var lastRenderedStep = executionState.steps
             _state.update { it.copy(isRunning = true, errorMessage = null) }
@@ -332,7 +313,6 @@ class TuringViewModel @Inject constructor(
                 delayMs = _state.value.settings.runDelayMs
             ).collect { state ->
                 executionState = state
-                currentRunPersisted = false
                 val shouldRender = shouldRenderEachStep ||
                     state.halted ||
                     state.errorMessage != null ||
@@ -363,41 +343,44 @@ class TuringViewModel @Inject constructor(
 
     fun clearAll() {
         cancelRun()
-        viewModelScope.launch {
-            persistRunIfNeeded()
-            executionState = createInitialExecutionUseCase("")
-            currentRunPersisted = false
-            nextRowId = 1L
-            _state.value = TuringUiState(
-                availablePrograms = _state.value.availablePrograms,
-                recentRuns = _state.value.recentRuns,
-                settings = _state.value.settings,
-                programRows = listOf(newCommandRow()),
-                tapeWindow = buildTapeWindow(executionState)
-            )
-        }
+        val previousRun = createRunPersistenceSnapshot()
+        val previousState = _state.value
+        replaceExecutionState(createInitialExecutionUseCase(""))
+        nextRowId = 1L
+        _state.value = TuringUiState(
+            availablePrograms = previousState.availablePrograms,
+            recentRuns = previousState.recentRuns,
+            settings = previousState.settings,
+            programRows = listOf(newCommandRow()),
+            tapeWindow = TuringEditor.buildTapeWindow(executionState, offset = 0)
+        )
+        persistRunAsync(previousRun)
     }
 
-    fun saveProgram() {
+    fun saveProgram(name: String) {
         cancelRun()
-        val sourceText = buildProgramSource(reportErrors = true) ?: return
-        val current = _state.value
-        val existing = current.availablePrograms.firstOrNull { it.id == current.selectedProgramId }
-        val now = System.currentTimeMillis()
-        val safeName = current.programName.trim().ifBlank { "Программа $now" }
-        val program = TmProgram(
-            id = current.selectedProgramId ?: 0,
-            name = safeName,
-            description = current.programDescription.trim(),
-            sourceText = sourceText,
-            createdAt = existing?.createdAt ?: now,
-            updatedAt = now
-        )
-
-        viewModelScope.launch {
-            when (val result = saveProgramUseCase(program)) {
-                AppResult.Loading -> Unit
-                is AppResult.Error -> messageChannel.send(result.message)
+        val safeName = name.trim()
+        if (safeName.isBlank()) {
+            publishError("Введите название алгоритма")
+            return
+        }
+        runJob = viewModelScope.launch {
+            val sourceText = withContext(dispatchers.default) {
+                buildProgramSource(reportErrors = true)
+            } ?: return@launch
+            val current = _state.value
+            val existing = current.availablePrograms.firstOrNull { it.id == current.selectedProgramId }
+            val now = System.currentTimeMillis()
+            val program = TmProgram(
+                id = current.selectedProgramId ?: 0,
+                name = safeName,
+                description = current.programDescription.trim(),
+                sourceText = sourceText,
+                createdAt = existing?.createdAt ?: now,
+                updatedAt = now
+            )
+            when (val result = tmRepository.saveProgram(program)) {
+                is AppResult.Error -> emitSnackbar(result.message)
                 is AppResult.Success -> {
                     val savedId = if (program.id != 0L) program.id else result.data
                     _state.update {
@@ -407,7 +390,7 @@ class TuringViewModel @Inject constructor(
                             programText = sourceText
                         )
                     }
-                    messageChannel.send(result.message ?: "Программа сохранена")
+                    emitSnackbar(result.message ?: "Программа сохранена")
                 }
             }
         }
@@ -423,15 +406,19 @@ class TuringViewModel @Inject constructor(
 
     fun loadProgram(program: TmProgram) {
         cancelRun()
-        applyLoadedProgram(program)
-        viewModelScope.launch {
-            messageChannel.send("Загружена программа '${program.name}'")
+        runJob = viewModelScope.launch {
+            applyLoadedProgram(program)
+            emitSnackbar("Загружена программа '${program.name}'")
         }
     }
 
-    private fun applyLoadedProgram(program: TmProgram) {
-        val rows = rowsFromSource(program.sourceText)
-        val alphabet = buildAlphabetFromRows(rows).ifBlank { _state.value.alphabetText }
+    private suspend fun applyLoadedProgram(program: TmProgram) {
+        val previousRun = createRunPersistenceSnapshot()
+        val (rows, parsedAlphabet) = withContext(dispatchers.default) {
+            val parsedRows = rowsFromSource(program.sourceText)
+            parsedRows to buildAlphabetFromRows(parsedRows)
+        }
+        val alphabet = parsedAlphabet.ifBlank { _state.value.alphabetText }
         _state.update {
             it.copy(
                 programName = program.name,
@@ -447,19 +434,21 @@ class TuringViewModel @Inject constructor(
                 focusedSymbolField = null
             )
         }
-        executionState = createInitialExecutionUseCase(normalizeInputTape(reportErrors = false).orEmpty())
-        currentRunPersisted = false
+        replaceExecutionState(
+            createInitialExecutionUseCase(normalizeInputTape(reportErrors = false).orEmpty())
+        )
         pushExecutionState(executionState)
+        persistRunAsync(previousRun)
     }
 
-    private fun buildValidatedProgram() = run {
-        val sourceText = buildProgramSource(reportErrors = true) ?: return@run null
-        val alphabet = parseAlphabet(reportErrors = true) ?: return@run null
+    private suspend fun buildValidatedProgram() = withContext(dispatchers.default) {
+        val sourceText = buildProgramSource(reportErrors = true) ?: return@withContext null
+        val alphabet = parseAlphabet(reportErrors = true) ?: return@withContext null
         if (!validateRowsAgainstAlphabet(alphabet, reportErrors = true)) {
-            return@run null
+            return@withContext null
         }
         if (!validateTapeAgainstAlphabet(alphabet, reportErrors = true)) {
-            return@run null
+            return@withContext null
         }
 
         when (val result = parseProgramUseCase(sourceText)) {
@@ -467,7 +456,6 @@ class TuringViewModel @Inject constructor(
                 publishError(result.message)
                 null
             }
-            AppResult.Loading -> null
             is AppResult.Success -> {
                 _state.update { it.copy(programText = sourceText, errorMessage = null) }
                 result.data
@@ -551,7 +539,7 @@ class TuringViewModel @Inject constructor(
 
                     when (rawMove) {
                         "L", "R", "S" -> {
-                            val nextState = normalizeStateAlias(nextStateRaw)
+                            val nextState = TuringEditor.normalizeStateAlias(nextStateRaw)
                             lines += "$currentState $readEncoded -> ${encodeSymbolToken(writeSymbol)} $rawMove $nextState"
                         }
 
@@ -610,7 +598,6 @@ class TuringViewModel @Inject constructor(
                 if (reportErrors) publishError(result.message)
                 null
             }
-            AppResult.Loading -> null
             is AppResult.Success -> {
                 if (result.data.isEmpty()) {
                     if (reportErrors) publishError("Введите алфавит")
@@ -623,12 +610,11 @@ class TuringViewModel @Inject constructor(
     }
 
     private fun normalizeInputTape(reportErrors: Boolean): String? {
-        return when (val result = parseCompactSymbolSequence(toParserTokens(_state.value.inputTape))) {
+        return when (val result = parseCompactSymbolSequence(TuringEditor.parserTokens(_state.value.inputTape))) {
             is AppResult.Error -> {
                 if (reportErrors) publishError(result.message)
                 null
             }
-            AppResult.Loading -> null
             is AppResult.Success -> result.data.joinToString(separator = "")
         }
     }
@@ -678,12 +664,11 @@ class TuringViewModel @Inject constructor(
     }
 
     private fun validateTapeAgainstAlphabet(alphabet: Set<Char>, reportErrors: Boolean): Boolean {
-        return when (val result = parseCompactSymbolSequence(toParserTokens(_state.value.inputTape))) {
+        return when (val result = parseCompactSymbolSequence(TuringEditor.parserTokens(_state.value.inputTape))) {
             is AppResult.Error -> {
                 if (reportErrors) publishError(result.message)
                 false
             }
-            AppResult.Loading -> false
             is AppResult.Success -> {
                 if (result.data.any { it !in alphabet }) {
                     if (reportErrors) publishError("Лента содержит символы вне алфавита")
@@ -699,35 +684,29 @@ class TuringViewModel @Inject constructor(
         persistCurrentRun: Boolean,
         successMessage: String?
     ) {
-        viewModelScope.launch {
-            if (persistCurrentRun) {
-                persistRunIfNeeded()
-            }
-            val normalizedTape = normalizeInputTape(reportErrors = true) ?: return@launch
-            val alphabet = parseAlphabet(reportErrors = true) ?: return@launch
-            if (!validateTapeAgainstAlphabet(alphabet, reportErrors = true)) {
-                return@launch
-            }
-            executionState = createInitialExecutionUseCase(normalizedTape)
-            currentRunPersisted = false
-            _state.update {
-                it.copy(
-                    windowOffset = 0,
-                    errorMessage = null,
-                    statusMessage = successMessage
-                )
-            }
-            pushExecutionState(executionState)
+        val normalizedTape = normalizeInputTape(reportErrors = true) ?: return
+        val alphabet = parseAlphabet(reportErrors = true) ?: return
+        if (!validateTapeAgainstAlphabet(alphabet, reportErrors = true)) {
+            return
         }
+        val previousRun = createRunPersistenceSnapshot().takeIf { persistCurrentRun }
+        replaceExecutionState(createInitialExecutionUseCase(normalizedTape))
+        _state.update {
+            it.copy(
+                windowOffset = 0,
+                errorMessage = null,
+                statusMessage = successMessage
+            )
+        }
+        pushExecutionState(executionState)
+        previousRun?.let(::persistRunAsync)
     }
 
     private fun updateRow(rowId: Long, transform: (ProgramCommandRowUiState) -> ProgramCommandRowUiState) {
+        cancelRun()
         _state.update { current ->
-            val rows = current.programRows.map { row ->
-                if (row.id == rowId) transform(row) else row
-            }
             current.copy(
-                programRows = rows,
+                programRows = TuringEditor.updateRow(current.programRows, rowId, transform),
                 errorMessage = null,
                 statusMessage = null
             )
@@ -735,21 +714,9 @@ class TuringViewModel @Inject constructor(
     }
 
     private fun moveCommandRow(rowId: Long, delta: Int) {
+        cancelRun()
         _state.update { current ->
-            val index = current.programRows.indexOfFirst { it.id == rowId }
-            if (index == -1) {
-                current
-            } else {
-                val targetIndex = (index + delta).coerceIn(0, current.programRows.lastIndex)
-                if (targetIndex == index) {
-                    current
-                } else {
-                    val rows = current.programRows.toMutableList()
-                    val item = rows.removeAt(index)
-                    rows.add(targetIndex, item)
-                    current.copy(programRows = rows)
-                }
-            }
+            current.copy(programRows = TuringEditor.moveRow(current.programRows, rowId, delta))
         }
     }
     private fun rowsFromSource(sourceText: String): List<ProgramCommandRowUiState> {
@@ -800,7 +767,7 @@ class TuringViewModel @Inject constructor(
 
     private fun publishError(message: String) {
         _state.update { it.copy(errorMessage = message, statusMessage = null) }
-        viewModelScope.launch { messageChannel.send(message) }
+        viewModelScope.launch { emitSnackbar(message) }
     }
 
     private fun cancelRun() {
@@ -812,7 +779,7 @@ class TuringViewModel @Inject constructor(
     private fun pushExecutionState(state: TmExecutionState) {
         _state.update { current ->
             current.copy(
-                tapeWindow = buildTapeWindow(state, offset = current.windowOffset),
+                tapeWindow = TuringEditor.buildTapeWindow(state, current.windowOffset),
                 currentState = state.currentState,
                 steps = state.steps,
                 halted = state.halted,
@@ -825,63 +792,55 @@ class TuringViewModel @Inject constructor(
 
     private fun finishRunIfNeeded(state: TmExecutionState) {
         if (state.errorMessage != null) {
-            viewModelScope.launch { messageChannel.send(state.errorMessage) }
+            viewModelScope.launch { emitSnackbar(state.errorMessage) }
         } else if (!state.statusMessage.isNullOrBlank()) {
-            viewModelScope.launch { messageChannel.send(state.statusMessage) }
+            viewModelScope.launch { emitSnackbar(state.statusMessage) }
         }
 
         val shouldPersist = state.halted || state.errorMessage != null || state.statusMessage?.startsWith("Достигнут лимит") == true
         if (shouldPersist) {
-            viewModelScope.launch {
-                persistRunIfNeeded()
+            persistRunAsync(createRunPersistenceSnapshot(state))
+        }
+    }
+
+    private fun replaceExecutionState(newState: TmExecutionState) {
+        currentRunGeneration += 1
+        executionState = newState
+    }
+
+    private fun createRunPersistenceSnapshot(
+        state: TmExecutionState = executionState
+    ) = RunPersistenceSnapshot(
+        generation = currentRunGeneration,
+        programId = _state.value.selectedProgramId,
+        executionState = state
+    )
+
+    private fun persistRunAsync(snapshot: RunPersistenceSnapshot) {
+        if (snapshot.executionState.steps == 0) return
+        applicationScope.launch {
+            persistRunIfNeeded(snapshot)
+        }
+    }
+
+    private suspend fun persistRunIfNeeded(snapshot: RunPersistenceSnapshot) {
+        if (snapshot.executionState.steps == 0) return
+        runPersistenceMutex.withLock {
+            if (snapshot.generation in persistedRunGenerations) return
+            when (saveRunUseCase(snapshot.programId, snapshot.executionState)) {
+                is AppResult.Success -> persistedRunGenerations += snapshot.generation
+                is AppResult.Error -> Unit
             }
-        }
-    }
-
-    private suspend fun persistRunIfNeeded() {
-        if (currentRunPersisted || executionState.steps == 0) {
-            return
-        }
-        saveRunUseCase(_state.value.selectedProgramId, executionState)
-        currentRunPersisted = true
-    }
-
-    private fun buildTapeWindow(
-        state: TmExecutionState,
-        radius: Int = DEFAULT_TAPE_RADIUS,
-        offset: Int = _state.value.windowOffset
-    ): List<TapeCell> {
-        val visibleCount = radius * 2 + 1
-        val center = state.headPos + offset
-
-        val start = when {
-            center < 0 -> center - radius
-            center <= radius -> 0
-            else -> center - radius
-        }
-
-        val end = start + visibleCount - 1
-
-        return (start..end).map { index ->
-            TapeCell(
-                index = index,
-                symbol = state.tape[index] ?: '_',
-                isHead = index == state.headPos
-            )
         }
     }
 
     private fun newCommandRow(
         leftRuleText: String = "",
         rightRuleText: String = ""
-    ) = ProgramCommandRowUiState(
-        id = nextRowId++,
-        leftRuleText = leftRuleText,
-        rightRuleText = rightRuleText
-    )
+    ) = TuringEditor.newRow(nextRowId++, leftRuleText, rightRuleText)
 
     private fun splitCommandPart(value: String): List<String> {
-        return value.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        return TuringEditor.splitCommandPart(value)
     }
 
     private fun parseRuleSymbol(
@@ -895,25 +854,7 @@ class TuringViewModel @Inject constructor(
                 if (reportErrors) publishError("Команда $commandIndex: $label: ${result.message}")
                 null
             }
-            AppResult.Loading -> null
             is AppResult.Success -> result.data
-        }
-    }
-
-    private fun normalizeStateAlias(rawState: String): String {
-        return when (rawState.trim().uppercase()) {
-            "Ω", "\\O", "HALT" -> "HALT"
-            else -> rawState.trim()
-        }
-    }
-
-    private fun normalizeMoveAlias(rawMove: String): String? {
-        return when (rawMove.trim().uppercase()) {
-            "L" -> "L"
-            "R" -> "R"
-            "S" -> "S"
-            "H" -> "S"
-            else -> null
         }
     }
 
@@ -927,77 +868,3 @@ class TuringViewModel @Inject constructor(
     }
 
 }
-
-@HiltViewModel
-class SettingsViewModel @Inject constructor(
-    observeSettingsUseCase: ObserveSettingsUseCase,
-    private val updateMaxRunStepsUseCase: UpdateMaxRunStepsUseCase,
-    private val updateRunDelayUseCase: UpdateRunDelayUseCase,
-    private val updateDebugEnabledUseCase: UpdateDebugEnabledUseCase
-) : EventViewModel() {
-    private val _state = MutableStateFlow(SettingsUiState())
-    val state = _state.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            observeSettingsUseCase().collect { settings ->
-                _state.update { current ->
-                    current.copy(
-                        settings = settings,
-                        maxRunStepsInput = if (current.maxRunStepsInput.isBlank() || current.maxRunStepsInput == current.settings.maxRunSteps.toString()) {
-                            settings.maxRunSteps.toString()
-                        } else {
-                            current.maxRunStepsInput
-                        },
-                        runDelayInput = if (current.runDelayInput.isBlank() || current.runDelayInput == current.settings.runDelayMs.toString()) {
-                            settings.runDelayMs.toString()
-                        } else {
-                            current.runDelayInput
-                        }
-                    )
-                }
-            }
-        }
-    }
-
-    fun updateMaxRunStepsInput(value: String) {
-        _state.update { it.copy(maxRunStepsInput = value) }
-    }
-
-    fun updateRunDelayInput(value: String) {
-        _state.update { it.copy(runDelayInput = value) }
-    }
-
-    fun toggleDebug(enabled: Boolean) {
-        viewModelScope.launch {
-            updateDebugEnabledUseCase(enabled)
-            messageChannel.send(if (enabled) "Debug включен" else "Debug выключен")
-        }
-    }
-
-    fun saveSettings() {
-        val maxSteps = _state.value.maxRunStepsInput.trim().toIntOrNull()
-        val runDelay = _state.value.runDelayInput.trim().toLongOrNull()
-
-        if (maxSteps == null || maxSteps <= 0) {
-            viewModelScope.launch { messageChannel.send("Лимит шагов должен быть положительным числом") }
-            return
-        }
-        if (runDelay == null || runDelay < 0) {
-            viewModelScope.launch { messageChannel.send("Скорость должна быть неотрицательным числом") }
-            return
-        }
-
-        viewModelScope.launch {
-            _state.update { it.copy(isSaving = true) }
-            updateMaxRunStepsUseCase(maxSteps)
-            updateRunDelayUseCase(runDelay)
-            _state.update { it.copy(isSaving = false) }
-            messageChannel.send("Сохранено")
-        }
-    }
-}
-
-
-
-

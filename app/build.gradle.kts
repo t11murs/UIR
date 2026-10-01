@@ -17,8 +17,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "SERVER_BASE_URL", "\"http://10.0.2.2:8080/\"")
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -27,10 +25,25 @@ android {
 
     buildTypes {
         debug {
-            isMinifyEnabled = false
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".live"
+            versionNameSuffix = "-live"
+            buildConfigField("String", "SERVER_BASE_URL", "\"https://mephi22.ru/\"")
+            resValue("string", "app_name", "Теория Алгоритмов")
+            matchingFallbacks += listOf("debug")
+        }
+        create("liveDebug") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".live"
+            versionNameSuffix = "-live"
+            buildConfigField("String", "SERVER_BASE_URL", "\"https://mephi22.ru/\"")
+            resValue("string", "app_name", "Теория Алгоритмов")
+            matchingFallbacks += listOf("debug")
         }
         release {
             isMinifyEnabled = false
+            buildConfigField("String", "SERVER_BASE_URL", "\"https://mephi22.ru/\"")
+            resValue("string", "app_name", "Теория Алгоритмов")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -57,10 +70,18 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
 }
 
 kapt {
     correctErrorTypes = true
+    arguments {
+        arg("room.schemaLocation", "$projectDir/schemas")
+        arg("room.incremental", "true")
+    }
 }
 
 dependencies {
@@ -69,6 +90,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.browser)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
@@ -86,10 +108,16 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.squareup.okhttp)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockito.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.squareup.mockwebserver)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)

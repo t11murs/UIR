@@ -1,26 +1,25 @@
 ﻿package com.example.uir_android.domain.usecase
 
-import com.example.uir_android.core.util.AppDispatchers
-import com.example.uir_android.core.util.AppResult
-import com.example.uir_android.core.util.BLANK_SYMBOL
-import com.example.uir_android.core.util.DEFAULT_TRACE_LIMIT
-import com.example.uir_android.core.util.parseSingleSymbolToken
-import com.example.uir_android.core.util.sparseTapeFromInput
+import com.example.uir_android.core.common.AppDispatchers
+import com.example.uir_android.core.common.AppResult
+import com.example.uir_android.domain.turing.BLANK_SYMBOL
+import com.example.uir_android.domain.turing.DEFAULT_TRACE_LIMIT
+import com.example.uir_android.domain.turing.parseSingleSymbolToken
+import com.example.uir_android.domain.turing.sparseTapeFromInput
 import com.example.uir_android.domain.model.MoveDirection
 import com.example.uir_android.domain.model.ParsedTmProgram
 import com.example.uir_android.domain.model.TmExecutionState
-import com.example.uir_android.domain.model.TmProgram
 import com.example.uir_android.domain.model.TmRule
 import com.example.uir_android.domain.model.TmRuleKey
 import com.example.uir_android.domain.model.TmRun
 import com.example.uir_android.domain.model.TmTraceEntry
-import com.example.uir_android.domain.repository.SettingsRepository
 import com.example.uir_android.domain.repository.TmRepository
 import javax.inject.Inject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -38,8 +37,15 @@ class CreateInitialExecutionUseCase @Inject constructor() {
     )
 }
 
-class ParseProgramUseCase @Inject constructor() {
-    operator fun invoke(sourceText: String): AppResult<ParsedTmProgram> {
+class ParseProgramUseCase @Inject constructor(
+    private val dispatchers: AppDispatchers
+) {
+    suspend operator fun invoke(sourceText: String): AppResult<ParsedTmProgram> =
+        withContext(dispatchers.default) {
+            parse(sourceText)
+        }
+
+    private fun parse(sourceText: String): AppResult<ParsedTmProgram> {
         val rules = linkedMapOf<TmRuleKey, TmRule>()
         val lines = sourceText.lines()
 
@@ -57,12 +63,10 @@ class ParseProgramUseCase @Inject constructor() {
             val state = tokens[0]
             val readSymbol = when (val result = parseSingleSymbolToken(tokens[1])) {
                 is AppResult.Error -> return AppResult.Error("Строка ${index + 1}: ${result.message}")
-                AppResult.Loading -> return AppResult.Error("Строка ${index + 1}: не удалось прочитать read")
                 is AppResult.Success -> result.data
             }
             val writeSymbol = when (val result = parseSingleSymbolToken(tokens[3])) {
                 is AppResult.Error -> return AppResult.Error("Строка ${index + 1}: ${result.message}")
-                AppResult.Loading -> return AppResult.Error("Строка ${index + 1}: не удалось прочитать write")
                 is AppResult.Success -> result.data
             }
             val move = when (tokens[4]) {
@@ -186,24 +190,6 @@ class RunUseCase @Inject constructor(
     }.flowOn(dispatchers.default)
 }
 
-class SaveProgramUseCase @Inject constructor(
-    private val repository: TmRepository
-) {
-    suspend operator fun invoke(program: TmProgram) = repository.saveProgram(program)
-}
-
-class LoadProgramsUseCase @Inject constructor(
-    private val repository: TmRepository
-) {
-    operator fun invoke() = repository.observePrograms()
-}
-
-class ObserveRunsUseCase @Inject constructor(
-    private val repository: TmRepository
-) {
-    operator fun invoke(limit: Int = 10) = repository.observeRecentRuns(limit)
-}
-
 class SaveRunUseCase @Inject constructor(
     private val repository: TmRepository,
     private val json: Json
@@ -224,34 +210,4 @@ class SaveRunUseCase @Inject constructor(
         )
         return repository.saveRun(run)
     }
-}
-
-class EnsurePresetProgramsUseCase @Inject constructor(
-    private val repository: TmRepository
-) {
-    suspend operator fun invoke() = repository.ensurePresetPrograms()
-}
-
-class ObserveSettingsUseCase @Inject constructor(
-    private val repository: SettingsRepository
-) {
-    operator fun invoke() = repository.observeSettings()
-}
-
-class UpdateMaxRunStepsUseCase @Inject constructor(
-    private val repository: SettingsRepository
-) {
-    suspend operator fun invoke(value: Int) = repository.updateMaxRunSteps(value)
-}
-
-class UpdateRunDelayUseCase @Inject constructor(
-    private val repository: SettingsRepository
-) {
-    suspend operator fun invoke(value: Long) = repository.updateRunDelayMs(value)
-}
-
-class UpdateDebugEnabledUseCase @Inject constructor(
-    private val repository: SettingsRepository
-) {
-    suspend operator fun invoke(enabled: Boolean) = repository.updateDebugEnabled(enabled)
 }

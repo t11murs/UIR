@@ -1,17 +1,23 @@
 ﻿package com.example.uir_android.data.repository.impl
 
-import com.example.uir_android.core.settings.AppSettingsStore
-import com.example.uir_android.core.util.AppDispatchers
-import com.example.uir_android.core.util.AppResult
+import com.example.uir_android.data.local.AppSettingsStore
+import com.example.uir_android.domain.repository.TestDraftRepository
+import com.example.uir_android.domain.repository.EmulatorControlDraftRepository
+import com.example.uir_android.core.common.AppDispatchers
+import com.example.uir_android.core.common.AppResult
 import com.example.uir_android.data.db.TmProgramDao
 import com.example.uir_android.data.db.TmRunDao
 import com.example.uir_android.data.db.toDomain
 import com.example.uir_android.data.db.toEntity
 import com.example.uir_android.domain.model.TmProgram
 import com.example.uir_android.domain.model.TmRun
+import com.example.uir_android.domain.model.AppThemeMode
 import com.example.uir_android.domain.model.defaultTmPrograms
 import com.example.uir_android.domain.repository.SettingsRepository
 import com.example.uir_android.domain.repository.TmRepository
+import com.example.uir_android.domain.repository.AuthRepository
+import com.example.uir_android.domain.repository.TestRepository
+import com.example.uir_android.domain.repository.EmulatorControlRepository
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -69,23 +75,9 @@ class SettingsRepositoryImpl @Inject constructor(
 ) : SettingsRepository {
     override fun observeSettings() = settingsStore.settingsFlow
 
-    override suspend fun getCurrentSettings() = settingsStore.currentSettings()
-
-    override suspend fun updateMaxRunSteps(value: Int) {
+    override suspend fun updateThemeMode(mode: AppThemeMode) {
         withContext(dispatchers.io) {
-            settingsStore.setMaxRunSteps(value)
-        }
-    }
-
-    override suspend fun updateRunDelayMs(value: Long) {
-        withContext(dispatchers.io) {
-            settingsStore.setRunDelayMs(value)
-        }
-    }
-
-    override suspend fun updateDebugEnabled(enabled: Boolean) {
-        withContext(dispatchers.io) {
-            settingsStore.setDebugEnabled(enabled)
+            settingsStore.setThemeMode(mode)
         }
     }
 }
@@ -98,4 +90,23 @@ abstract class RepositoryModule {
 
     @Binds
     abstract fun bindSettingsRepository(impl: SettingsRepositoryImpl): SettingsRepository
+
+    @Binds
+    abstract fun bindAuthRepository(impl: AuthRepositoryImpl): AuthRepository
+
+    @Binds
+    abstract fun bindTestRepository(impl: TestRepositoryImpl): TestRepository
+
+    @Binds
+    abstract fun bindEmulatorControlRepository(
+        impl: EmulatorControlRepositoryImpl
+    ): EmulatorControlRepository
+
+    @Binds
+    abstract fun bindTestDraftRepository(impl: RoomTestDraftRepository): TestDraftRepository
+
+    @Binds
+    abstract fun bindEmulatorControlDraftRepository(
+        impl: RoomEmulatorControlDraftRepository
+    ): EmulatorControlDraftRepository
 }

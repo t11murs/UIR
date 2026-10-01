@@ -14,178 +14,162 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Article
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.Assignment
+import androidx.compose.material.icons.automirrored.outlined.FactCheck
 import androidx.compose.material.icons.outlined.Calculate
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.uir_android.core.util.formatDisplayName
-
-private data class MenuTile(
-    val title: String,
-    val icon: @Composable () -> Unit,
-    val onClickKey: String
-)
-
-private data class NewsCardData(
-    val title: String,
-    val description: String
-)
-
-private val homeNews = listOf(
-    NewsCardData(
-        title = "Обновление практикума",
-        description = "Исправлены найденные ошибки и неточности. PDF-версия будет добавлена в приложение отдельным разделом."
-    ),
-    NewsCardData(
-        title = "Вопросы к экзамену",
-        description = "Раздел с материалами для подготовки появится здесь отдельными карточками и быстрыми ссылками."
-    ),
-    NewsCardData(
-        title = "Видеозаписи лекций",
-        description = "Здесь будет собрана подборка записей и дополнительных материалов по курсу."
-    )
-)
-
-private val menuTiles = listOf(
-    MenuTile(
-        title = "Эмулятор машины Тьюринга",
-        icon = { Icon(Icons.Outlined.Calculate, contentDescription = null) },
-        onClickKey = "emulator"
-    ),
-    MenuTile(
-        title = "Новости",
-        icon = { Icon(Icons.AutoMirrored.Outlined.Article, contentDescription = null) },
-        onClickKey = "news"
-    )
-)
-
-private val HomeBackgroundTop = Color(0xFFF6E7D3)
-private val HomeBackgroundBottom = Color(0xFFF4F1EB)
-private val HeroAccent = Color(0xFFE58A14)
-private val HeroDeep = Color(0xFF0F7A7A)
-private val HeroText = Color(0xFF1E2530)
-private val CardSurface = Color(0xFFFFFBF6)
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.uir_android.domain.model.NewsItem
+import com.example.uir_android.core.util.openExternalUri
+import com.example.uir_android.ui.component.LinkifiedText
+import com.example.uir_android.ui.viewmodel.HomeViewModel
+import com.example.uir_android.ui.viewmodel.MenuViewModel
 
 @Composable
 fun HomeScreen(
-    email: String
+    email: String,
+    onOpenNews: (String) -> Unit,
+    viewModel: HomeViewModel = hiltViewModel()
 ) {
-    val displayName = formatDisplayName(email)
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val colors = MaterialTheme.colorScheme
+    val fallbackName = email.substringBefore('@').trim().ifBlank { "пользователь" }
+    val displayName = state.userName.ifBlank { fallbackName }
 
-    Box(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 brush = Brush.verticalGradient(
-                    colors = listOf(HomeBackgroundTop, HomeBackgroundBottom)
+                    colors = listOf(colors.surfaceVariant, colors.background)
                 )
-            )
+            ),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            item {
-                HomeHeroCard(displayName = displayName)
-            }
-
-            item {
-                HomeInfoCard()
-            }
-
-            item {
+        item {
+            WelcomeCard(displayName)
+        }
+        item {
+            CourseInformationCard()
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     text = "Новости",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = HeroText,
-                    modifier = Modifier.padding(horizontal = 4.dp)
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colors.onBackground,
+                    fontWeight = FontWeight.Bold
                 )
-            }
-
-            items(homeNews) { item ->
-                NewsCard(item = item)
-            }
-        }
-    }
-}
-
-@Composable
-fun MenuScreen(
-    onOpenEmulator: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(HomeBackgroundTop, HomeBackgroundBottom)
-                )
-            )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Меню",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = HeroText
-                )
-                Text(
-                    text = "Выберите нужный раздел.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = HeroText.copy(alpha = 0.74f)
-                )
-            }
-
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                gridItems(menuTiles) { tile ->
-                    MenuTileCard(
-                        tile = tile,
-                        onClick = {
-                            if (tile.onClickKey == "emulator") {
-                                onOpenEmulator()
-                            }
-                        }
-                    )
+                IconButton(
+                    onClick = viewModel::refresh,
+                    enabled = !state.isLoading && !state.isRefreshing
+                ) {
+                    if (state.isRefreshing) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Outlined.Refresh, contentDescription = "Обновить новости")
+                    }
                 }
             }
         }
+        item {
+            DevelopmentFeedbackCard()
+        }
+        if (state.isLoading) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = colors.primary)
+                }
+            }
+        } else {
+            state.errorMessage?.let { message ->
+                item {
+                    HomeNewsMessage(
+                        message = message,
+                        buttonText = "Повторить",
+                        onClick = viewModel::refresh
+                    )
+                }
+            }
+            if (state.news.isEmpty() && state.errorMessage == null) {
+                item {
+                    HomeNewsMessage(
+                        message = "Новостей пока нет",
+                        buttonText = "Обновить",
+                        onClick = viewModel::refresh
+                    )
+                }
+            }
+            items(state.news, key = { it.id }) { news ->
+                HomeNewsCard(news = news, onClick = { onOpenNews(news.id) })
+            }
+        }
     }
 }
 
 @Composable
-private fun HomeHeroCard(displayName: String) {
+private fun DevelopmentFeedbackCard() {
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.primaryContainer)
+    ) {
+        LinkifiedText(
+            text = "Это приложение сейчас на этапе разработки, просьба присылать любую обратную связь в Telegram: @t1murs",
+            onOpenLink = { openExternalUri(context, it) },
+            modifier = Modifier.padding(16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onPrimaryContainer,
+            linkColor = colors.primary
+        )
+    }
+}
+
+@Composable
+private fun WelcomeCard(displayName: String) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
         Column(
@@ -193,44 +177,36 @@ private fun HomeHeroCard(displayName: String) {
                 .fillMaxWidth()
                 .padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(78.dp)
+                    .size(68.dp)
                     .background(
                         brush = Brush.verticalGradient(
-                            colors = listOf(HeroDeep, Color(0xFF28A39A))
+                            colors = listOf(colors.primary, colors.tertiary)
                         ),
                         shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.MenuBook,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(34.dp)
+                Text(
+                    text = "AT",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = colors.onPrimary,
+                    fontWeight = FontWeight.Bold
                 )
             }
-
             Text(
                 text = "Algorithms Theory",
-                style = MaterialTheme.typography.headlineMedium,
-                color = HeroAccent
+                style = MaterialTheme.typography.headlineSmall,
+                color = colors.secondary,
+                fontWeight = FontWeight.Bold
             )
-
             Text(
                 text = "Добро пожаловать, $displayName!",
-                style = MaterialTheme.typography.titleLarge,
-                color = HeroText,
-                textAlign = TextAlign.Center
-            )
-
-            Text(
-                text = "Система поддержки обучения по курсу \"Теория алгоритмов\" объединяет материалы, эмуляторы и рабочие разделы курса в одном приложении.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = HeroText.copy(alpha = 0.86f),
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.onSurface,
                 textAlign = TextAlign.Center
             )
         }
@@ -238,126 +214,229 @@ private fun HomeHeroCard(displayName: String) {
 }
 
 @Composable
-private fun HomeInfoCard() {
+private fun CourseInformationCard() {
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurface)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface)
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Возможности",
-                style = MaterialTheme.typography.titleLarge,
-                color = HeroText
+                text = "Система поддержки обучения по курсу «Теория алгоритмов» позволяет:",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.onSurface,
+                fontWeight = FontWeight.SemiBold
             )
-            FeatureLine("Проходить тренировочные и контрольные тесты")
-            FeatureLine("Читать лекции и готовиться к экзамену")
-            FeatureLine("Работать с эмуляторами по темам курса")
-            FeatureLine("Отслеживать результаты в личном кабинете")
-            Text(
-                text = "Описание возникающих при работе проблем, а также замечания и предложения, просим направлять по нашему электронному адресу algorithms.theory@yandex.ru",
-                style = MaterialTheme.typography.bodyLarge,
-                color = HeroText.copy(alpha = 0.82f)
+            CourseFeature("проходить тренировочные и контрольные тесты")
+            CourseFeature("работать с эмулятором машины Тьюринга")
+            CourseFeature("отмечать посещаемость лекций и семинаров")
+            CourseFeature("отслеживать результаты в личном кабинете")
+            LinkifiedText(
+                text = "Вопросы и предложения: algorithms.theory@yandex.ru",
+                onOpenLink = { openExternalUri(context, it) },
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.primary,
+                linkColor = colors.primary
             )
         }
     }
 }
 
 @Composable
-private fun FeatureLine(text: String) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .size(7.dp)
-                .background(HeroAccent, CircleShape)
-        )
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyLarge,
-            color = HeroText
-        )
+private fun CourseFeature(text: String) {
+    val colors = MaterialTheme.colorScheme
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("•", color = colors.secondary, fontWeight = FontWeight.Bold)
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
     }
 }
 
 @Composable
-private fun NewsCard(item: NewsCardData) {
+private fun HomeNewsCard(news: NewsItem, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(HeroAccent)
-                    .padding(horizontal = 18.dp, vertical = 14.dp)
+                    .background(colors.secondary)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Text(
-                    text = item.title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge
+                    text = news.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.onSecondary,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
-
             Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = item.description,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = HeroText.copy(alpha = 0.82f)
-                )
+                val preview = news.summary.ifBlank { news.body }
+                if (preview.isNotBlank()) {
+                    LinkifiedText(
+                        text = preview,
+                        onOpenLink = { openExternalUri(context, it) },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurface,
+                        maxLines = 4
+                    )
+                }
+                news.publishedAt?.let { date ->
+                    Text(
+                        text = date,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (news.attachments.isNotEmpty()) {
+                    Button(onClick = onClick) {
+                        Icon(Icons.Outlined.AttachFile, contentDescription = null)
+                        Text(
+                            text = if (news.attachments.size == 1) "Скачать файл" else "Открыть вложения",
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                    }
+                } else {
+                    OutlinedButton(onClick = onClick) {
+                        Text("Подробнее")
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MenuTileCard(
-    tile: MenuTile,
+private fun HomeNewsMessage(
+    message: String,
+    buttonText: String,
     onClick: () -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colors.surface)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(message, textAlign = TextAlign.Center)
+            OutlinedButton(onClick = onClick) { Text(buttonText) }
+        }
+    }
+}
+
+@Composable
+fun MenuScreen(
+    onOpenEmulator: () -> Unit,
+    onOpenTests: () -> Unit,
+    onOpenLectureAttendance: () -> Unit,
+    onOpenSeminarAttendance: () -> Unit,
+    viewModel: MenuViewModel = hiltViewModel()
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(colors.surfaceVariant, colors.background)
+                )
+            )
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text(
+            text = "Меню",
+            style = MaterialTheme.typography.headlineMedium,
+            color = colors.onBackground
+        )
+        MenuCard(
+            title = "Эмулятор машины Тьюринга",
+            icon = { Icon(Icons.Outlined.Calculate, contentDescription = null) },
+            onClick = onOpenEmulator
+        )
+        MenuCard(
+            title = "Тесты",
+            icon = { Icon(Icons.AutoMirrored.Outlined.Assignment, contentDescription = null) },
+            onClick = onOpenTests
+        )
+        if (state.canViewLectureAttendance) {
+            MenuCard(
+                title = "Посещаемость лекций",
+                icon = { Icon(Icons.AutoMirrored.Outlined.FactCheck, contentDescription = null) },
+                onClick = onOpenLectureAttendance
+            )
+        }
+        if (state.canViewSeminarAttendance) {
+            MenuCard(
+                title = "Посещаемость семинаров",
+                icon = { Icon(Icons.Outlined.Groups, contentDescription = null) },
+                onClick = onOpenSeminarAttendance
+            )
+        }
+    }
+}
+
+@Composable
+private fun MenuCard(
+    title: String,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(190.dp)
                 .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
                     .size(54.dp)
-                    .background(
-                        color = HeroDeep,
-                        shape = RoundedCornerShape(16.dp)
-                    ),
+                    .background(colors.primary, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                tile.icon()
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.material3.LocalContentColor provides colors.onPrimary
+                ) {
+                    icon()
+                }
             }
-
             Text(
-                text = tile.title,
+                text = title,
                 style = MaterialTheme.typography.titleLarge,
-                color = HeroText
+                color = colors.onSurface
             )
         }
     }

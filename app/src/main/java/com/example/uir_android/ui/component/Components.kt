@@ -24,21 +24,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.uir_android.core.util.formatSymbolForUi
+import com.example.uir_android.ui.util.formatSymbolForUi
 import com.example.uir_android.core.util.formatTimestamp
 import com.example.uir_android.domain.model.TapeCell
 import com.example.uir_android.domain.model.TmProgram
 import com.example.uir_android.domain.model.TmRun
 import com.example.uir_android.domain.model.TmTraceEntry
-
-private val TapeBorderColor = Color(0xFF3F4349)
-private val TapeDefaultColor = Color.White
-private val TapeHeadColor = Color(0xFFC6F4B6)
-private val TapeSymbolColor = Color(0xFF5C6470)
 
 @Composable
 fun MenuCard(
@@ -67,6 +61,7 @@ fun MenuCard(
 
 @Composable
 fun TapeWindow(cells: List<TapeCell>, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
     LazyRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(0.dp),
@@ -77,14 +72,20 @@ fun TapeWindow(cells: List<TapeCell>, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .padding(vertical = 4.dp)
                     .size(width = 42.dp, height = 56.dp)
-                    .border(width = 1.dp, color = TapeBorderColor)
-                    .background(if (cell.isHead) TapeHeadColor else TapeDefaultColor),
+                    .border(width = 1.dp, color = colors.outline)
+                    .background(
+                        if (cell.isHead) colors.tertiaryContainer else colors.surface
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = formatSymbolForUi(cell.symbol),
                     style = MaterialTheme.typography.headlineSmall,
-                    color = TapeSymbolColor,
+                    color = if (cell.isHead) {
+                        colors.onTertiaryContainer
+                    } else {
+                        colors.onSurface
+                    },
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -132,11 +133,11 @@ fun SavedProgramsDialog(
             }
         },
         title = {
-            Text("Программы")
+            Text("Сохранённые алгоритмы")
         },
         text = {
             if (programs.isEmpty()) {
-                Text("Пусто")
+                Text("Сохранённых алгоритмов пока нет")
             } else {
                 LazyColumn(
                     modifier = modifier

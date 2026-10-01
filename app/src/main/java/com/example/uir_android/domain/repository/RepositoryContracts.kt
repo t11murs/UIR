@@ -1,7 +1,8 @@
 ﻿package com.example.uir_android.domain.repository
 
-import com.example.uir_android.core.util.AppResult
+import com.example.uir_android.core.common.AppResult
 import com.example.uir_android.domain.model.AppSettings
+import com.example.uir_android.domain.model.AppThemeMode
 import com.example.uir_android.domain.model.TmProgram
 import com.example.uir_android.domain.model.TmRun
 import kotlinx.coroutines.flow.Flow
@@ -21,11 +22,5 @@ interface TmRepository {
 interface SettingsRepository {
     fun observeSettings(): Flow<AppSettings>
 
-    suspend fun getCurrentSettings(): AppSettings
-
-    suspend fun updateMaxRunSteps(value: Int)
-
-    suspend fun updateRunDelayMs(value: Long)
-
-    suspend fun updateDebugEnabled(enabled: Boolean)
+    suspend fun updateThemeMode(mode: AppThemeMode)
 }
